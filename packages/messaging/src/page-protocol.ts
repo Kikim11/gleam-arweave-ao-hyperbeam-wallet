@@ -160,19 +160,59 @@ export function encodeTaggedBinary(value: unknown): unknown {
   return value;
 }
 
-/** The inverse of `encodeTaggedBinary`. */
-export function decodeTaggedBinary(value: unknown): unknown {
+/**
+ * Limits for `decodeTaggedBinary`. The value it decodes is page-supplied
+ * (provider params reach it before the approval layer's stored-size cap
+ * in `approval.ts` is consulted, and the no-grant `connect` path reaches
+ * it with no grant at all), so the walk itself has to bound the work a
+ * single message can make the background worker do: how deep it nests,
+ * how many values it holds in total, and how many tagged-binary bytes
+ * it materializes. The byte limit is deliberately well above the
+ * approval layer's 2 MiB per-origin stored cap, so data a page could
+ * legitimately ask to sign or encrypt still decodes; what stops is the
+ * unbounded case — tens of megabytes of tagged bytes, a structure with
+ * millions of plain values, or nesting deep enough to overflow the
+ * stack (which today surfaces as a bare `RangeError`).
+ */
+export const MAX_DECODE_DEPTH = 100;
+export const MAX_DECODE_VALUES = 1_000_000;
+export const MAX_DECODE_TAGGED_BYTES = 16 * 1024 * 1024;
+
+interface DecodeBudget {
+  values: number;
+  taggedBytes: number;
+}
+
+function decodeWithinBudget(value: unknown, depth: number, budget: DecodeBudget): unknown {
+  if (depth > MAX_DECODE_DEPTH) {
+    throw new Error(`Provider parameters are nested too deeply (over ${MAX_DECODE_DEPTH} levels).`);
+  }
+  budget.values += 1;
+  if (budget.values > MAX_DECODE_VALUES) {
+    throw new Error(`Provider parameters hold too many values (over ${MAX_DECODE_VALUES}).`);
+  }
   if (isTaggedBinary(value)) {
+    budget.taggedBytes += value.data.length;
+    if (budget.taggedBytes > MAX_DECODE_TAGGED_BYTES) {
+      throw new Error(`Provider parameters hold too much binary data (over ${MAX_DECODE_TAGGED_BYTES} bytes).`);
+    }
     const bytes = Uint8Array.from(value.data);
     return value.__gleamType === "ArrayBuffer" ? bytes.buffer : bytes;
   }
   if (Array.isArray(value)) {
-    return value.map(decodeTaggedBinary);
+    return value.map((entry) => decodeWithinBudget(entry, depth + 1, budget));
   }
   if (isPlainRecord(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, decodeTaggedBinary(entry)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, decodeWithinBudget(entry, depth + 1, budget)]),
+    );
   }
   return value;
+}
+
+/** The inverse of `encodeTaggedBinary`. */
+export function decodeTaggedBinary(value: unknown): unknown {
+  return decodeWithinBudget(value, 0, { values: 0, taggedBytes: 0 });
 }
 
 /**
