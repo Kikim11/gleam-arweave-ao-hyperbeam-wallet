@@ -207,10 +207,18 @@ function parseDataItem(raw: Uint8Array): DataItemParts {
   const owner = slice(OWNER_OFFSET, OWNER_OFFSET + OWNER_LENGTH);
   const [target, anchorStart] = presentField(OWNER_OFFSET + OWNER_LENGTH, TARGET_LENGTH);
   const [anchor, tagsStart] = presentField(anchorStart, ANCHOR_LENGTH);
-  const tagByteLength = readLittleEndian(slice(tagsStart, tagsStart + 16), 8, 8);
+  const tagHeader = slice(tagsStart, tagsStart + 16);
+  const tagCount = readLittleEndian(tagHeader, 0, 8);
+  const tagByteLength = readLittleEndian(tagHeader, 8, 8);
   if (tagByteLength > MAX_TAG_BYTES) fail("tags exceed 4096 bytes");
   const tags = slice(tagsStart + 16, tagsStart + 16 + tagByteLength);
   const data = raw.slice(tagsStart + 16 + tagByteLength);
+  // The header's tag count is not covered by the deep hash, so compare it
+  // with the tags the tag bytes actually decode to (decodeTags also refuses
+  // bytes left over after the tag list's end). An item whose two counts
+  // disagree must not read cleanly here while a reader that trusts the
+  // header sees a different item.
+  if (decodeTags(tags).length !== tagCount) fail("header tag count disagrees with the tag bytes");
   return { owner, target, anchor, tags, data };
 }
 
@@ -252,6 +260,9 @@ function decodeTags(bytes: Uint8Array): DataItemTag[] {
       tags.push({ name: fields[0]!, value: fields[1]! });
     }
     [count, offset] = readAvroLong(bytes, offset);
+  }
+  if (offset !== bytes.byteLength) {
+    throw new Error("Not a valid ANS-104 data item: trailing bytes after the tag list.");
   }
   return tags;
 }

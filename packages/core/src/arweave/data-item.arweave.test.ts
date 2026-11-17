@@ -150,6 +150,73 @@ describe("device signatures", () => {
   });
 });
 
+describe("header tag count", () => {
+  // For an item with no target and no anchor: signature type (2) +
+  // signature (512) + owner (512) + target presence byte (1) + anchor
+  // presence byte (1). The 8-byte tag count comes first in the header,
+  // then the 8-byte tag byte length, then the tag bytes themselves.
+  const TAG_COUNT_OFFSET = 2 + 512 + 512 + 1 + 1;
+  const TAG_BYTE_LENGTH_OFFSET = TAG_COUNT_OFFSET + 8;
+  const TAG_BYTES_OFFSET = TAG_COUNT_OFFSET + 16;
+
+  function readU64LE(bytes: Uint8Array, offset: number): number {
+    let value = 0;
+    for (let i = 7; i >= 0; i -= 1) value = value * 256 + bytes[offset + i]!;
+    return value;
+  }
+
+  function writeU64LE(bytes: Uint8Array, offset: number, value: number): void {
+    let remaining = value;
+    for (let i = 0; i < 8; i += 1) {
+      bytes[offset + i] = remaining % 256;
+      remaining = Math.floor(remaining / 256);
+    }
+  }
+
+  const TAGGED: DataItemFields = {
+    data: utf8("payload"),
+    tags: [
+      { name: "App-Name", value: "Gleam" },
+      { name: "Content-Type", value: "text/plain" },
+    ],
+  };
+
+  it("refuses an item whose header tag count disagrees with its tags: it no longer verifies and throws on read-back", async () => {
+    const { raw } = await createSignedDataItem(signerFromJwk(jwk, ""), TAGGED);
+    const signature = raw.subarray(2, 514);
+    // The unmutated item Gleam built still verifies and reads back.
+    expect(await verifyDataItemSignature(raw, signature, jwk.n)).toBe(true);
+    expect(readDataItemFields(raw).tags).toEqual(TAGGED.tags);
+
+    // The deep hash covers the raw tag bytes, not the header count, so
+    // before this check the mutated item still verified.
+    const mutated = new Uint8Array(raw);
+    writeU64LE(mutated, TAG_COUNT_OFFSET, 7);
+    expect(readU64LE(mutated, TAG_COUNT_OFFSET)).toBe(7);
+
+    expect(await verifyDataItemSignature(mutated, signature, jwk.n)).toBe(false);
+    expect(() => readDataItemFields(mutated)).toThrow(/tag count disagrees/);
+    await expect(dataItemSignatureData(mutated)).rejects.toThrow(/tag count disagrees/);
+  });
+
+  it("refuses an item with trailing bytes after its tag list", async () => {
+    const unsigned = buildUnsignedDataItem(jwk.n, TAGGED);
+    expect(readDataItemFields(unsigned).tags).toEqual(TAGGED.tags);
+
+    const tagByteLength = readU64LE(unsigned, TAG_BYTE_LENGTH_OFFSET);
+    const extra = new Uint8Array([0xff, 0xee]);
+    const insertAt = TAG_BYTES_OFFSET + tagByteLength;
+    const mutated = new Uint8Array(unsigned.byteLength + extra.byteLength);
+    mutated.set(unsigned.subarray(0, insertAt));
+    mutated.set(extra, insertAt);
+    mutated.set(unsigned.subarray(insertAt), insertAt + extra.byteLength);
+    writeU64LE(mutated, TAG_BYTE_LENGTH_OFFSET, tagByteLength + extra.byteLength);
+
+    expect(() => readDataItemFields(mutated)).toThrow(/trailing bytes after the tag list/);
+    await expect(dataItemSignatureData(mutated)).rejects.toThrow(/trailing bytes after the tag list/);
+  });
+});
+
 describe("tag limits", () => {
   it("rejects an oversized tag value with a clean error instead of a RangeError", () => {
     const huge = "x".repeat(2_000_000);
