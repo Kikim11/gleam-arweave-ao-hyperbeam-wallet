@@ -131,7 +131,7 @@ trap 'rm -rf "$work"' EXIT
 echo "== Downloading $tag =="
 dl="$work/release"
 mkdir -p "$dl"
-curl -fsSL --retry 2 -o "$dl/release-manifest.json" "$BASE_URL/$tag/release-manifest.json" \
+curl -fsSL --proto =https,file --retry 2 -o "$dl/release-manifest.json" "$BASE_URL/$tag/release-manifest.json" \
   || { echo "could not download release-manifest.json for $tag from $BASE_URL" >&2; exit 1; }
 # Run from $work so node picks up nothing from the checkout.
 manifest_field() {
@@ -147,7 +147,7 @@ fi
 [ "$manifest_commit" = "$tag_commit" ] \
   || { echo "manifest commit is ${manifest_commit:-missing}, $tag points to $tag_commit; refusing to pack" >&2; exit 1; }
 zip="$dl/$zip_name"
-curl -fsSL --retry 2 -o "$zip" "$BASE_URL/$tag/$zip_name" \
+curl -fsSL --proto =https,file --retry 2 -o "$zip" "$BASE_URL/$tag/$zip_name" \
   || { echo "could not download $zip_name for $tag from $BASE_URL" >&2; exit 1; }
 got_sha="$(sha256 "$zip")"
 [ "$got_sha" = "$want_sha" ] \

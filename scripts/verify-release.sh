@@ -126,7 +126,7 @@ fi
 
 dl="$work/release"
 mkdir -p "$dl"
-if ! curl -fsSL --retry 2 -o "$dl/release-manifest.json" "$BASE_URL/$tag/release-manifest.json"; then
+if ! curl -fsSL --proto =https,file --retry 2 -o "$dl/release-manifest.json" "$BASE_URL/$tag/release-manifest.json"; then
   die "could not download release-manifest.json for $tag from $BASE_URL"
 fi
 manifest_field() { node -p 'const v=require(process.argv[1])[process.argv[2]];typeof v==="string"?v:""' "$dl/release-manifest.json" "$1"; }
@@ -137,7 +137,7 @@ if [[ ! "$zip_name" =~ ^[A-Za-z0-9._-]+\.zip$ ]] || [[ ! "$want_sha" =~ ^[0-9a-f
   die "release-manifest.json has no valid zipName and zipSha256"
 fi
 
-if ! curl -fsSL --retry 2 -o "$dl/$zip_name" "$BASE_URL/$tag/$zip_name"; then
+if ! curl -fsSL --proto =https,file --retry 2 -o "$dl/$zip_name" "$BASE_URL/$tag/$zip_name"; then
   die "could not download $zip_name for $tag from $BASE_URL"
 fi
 got_sha="$(sha256 "$dl/$zip_name")"
