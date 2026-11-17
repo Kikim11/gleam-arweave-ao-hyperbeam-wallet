@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { bytesToBase64, bytesToBase64Url, decodeBackupFile, encodeBackupFile, newBackupId, type Wallet } from "@gleam/core";
-import { Keyring } from "@gleam/core/signer";
+import { DEFAULT_ARGON2ID_PARAMS, Keyring } from "@gleam/core/signer";
 import { userErrorMessage } from "@gleam/core/src/models/user-errors.ts";
 import { InMemoryCloudAccount, InMemoryCloudFile, InMemoryStorage, InMemoryTimer } from "../../testing";
 import { registerBackupSync } from "../backup-sync";
@@ -93,6 +93,13 @@ describe("BackupHandler: set up", () => {
     expect(status).toMatchObject({ enabled: true, problem: null });
     expect(status.lastBackupAt).toBeGreaterThan(0);
     expect(target.cloud.account.writes).toBe(1);
+  });
+
+  it("wraps the backup key at the default cost, not the stored envelope's cheaper one", async () => {
+    const target = await backedUp();
+    const file = decodeBackupFile(target.cloud.account.file!.bytes)!;
+    // The test vault's envelopes carry the cheap TEST_KDF cost; the wrap must not inherit it.
+    expect(file.header.wrapped).toMatchObject({ version: 2, ...DEFAULT_ARGON2ID_PARAMS });
   });
 
   it("puts nothing readable in the account", async () => {
