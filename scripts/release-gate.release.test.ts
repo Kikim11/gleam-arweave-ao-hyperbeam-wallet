@@ -197,6 +197,34 @@ describe("runGate against a throwaway repo", () => {
     expect(runGate({ cwd: repo }).ok).toBe(true);
   });
 
+  it("refuses a dirty working tree that would mask a HEAD surface change", () => {
+    audited();
+    write("apps/extension/package.json", JSON.stringify({ version: "1.2.3", scripts: { build: "echo changed" } }));
+    commit("change script");
+    // Left uncommitted, this copy differs from the audited commit only in
+    // version, so the old version-only check filtered the HEAD change out
+    // and the gate passed. The gate must refuse the dirty tree instead.
+    write("apps/extension/package.json", JSON.stringify({ version: "1.2.4", scripts: { build: "echo hi" } }));
+    const result = runGate({ cwd: repo });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/working tree has uncommitted changes/);
+  });
+
+  it("refuses a dirty working tree instead of failing a clean HEAD on an uncommitted edit", () => {
+    const sha = commit("base");
+    write("security/audits/v1.2.4.md", audit({ version: "1.2.4", commit: sha }));
+    commit("audit");
+    write("apps/extension/package.json", JSON.stringify({ version: "1.2.4", scripts: { build: "echo hi" } }));
+    commit("version bump");
+    expect(runGate({ cwd: repo }).ok).toBe(true);
+    write("apps/extension/package.json", JSON.stringify({ version: "1.2.4", scripts: { build: "echo changed" } }));
+    const result = runGate({ cwd: repo });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/working tree has uncommitted changes/);
+  });
+
   it("fails and lists the files when a surface file changed", () => {
     audited();
     write("core/vault/key.ts", "export const k = 2;\n");

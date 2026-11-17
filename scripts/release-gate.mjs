@@ -208,6 +208,19 @@ export function runGate({ cwd = process.cwd() } = {}) {
   if (!top.ok) return { ok: false, reason: `not a git repository: ${cwd}` };
   const root = top.out;
 
+  // The surface comparison below is commit-to-HEAD, but the version, the
+  // audit file, the surface list and the version-only check all read the
+  // working tree. On a dirty tree the verdict would not describe HEAD: a
+  // HEAD change can be masked by a version-only working-tree copy, or a
+  // clean HEAD can be failed by an unrelated edit. Refuse a dirty tree up
+  // front, as release.mjs does, so the gate is a function of HEAD alone.
+  // Untracked files can't end up in the tagged commit, so they don't block.
+  const dirty = git(root, ["status", "--porcelain", "--untracked-files=no"]);
+  if (!dirty.ok) return { ok: false, reason: `git status failed: ${dirty.out}` };
+  if (dirty.out !== "") {
+    return { ok: false, reason: "working tree has uncommitted changes", details: dirty.out.split("\n") };
+  }
+
   let version;
   try {
     version = readVersion(root);
